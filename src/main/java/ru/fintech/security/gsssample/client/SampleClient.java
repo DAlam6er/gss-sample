@@ -1,0 +1,196 @@
+package ru.fintech.security.gsssample.client;
+
+import org.ietf.jgss.GSSContext;
+import org.ietf.jgss.GSSException;
+import org.ietf.jgss.GSSManager;
+import org.ietf.jgss.GSSName;
+import org.ietf.jgss.MessageProp;
+import org.ietf.jgss.Oid;
+
+import java.io.DataInputStream;
+import java.io.DataOutputStream;
+import java.io.IOException;
+import java.net.Socket;
+
+/**
+ * A sample client application that uses JGSS to do mutual authentication
+ * with a server using Kerberos as the underlying mechanism. It then
+ * exchanges data securely with the server.
+ * <p>
+ * Every message sent to the server includes a 4-byte application-level
+ * header that contains the big-endian integer value for the number
+ * of bytes that will follow as part of the JGSS token.
+ * <p>
+ * The protocol is:
+ *    1.  Context establishment loop:
+ *         a. client sends init sec context token to server
+ *         b. server sends accept sec context token to client
+ *         ....
+ *    2. client sends a wrap token to the server.
+ *    3. server sends a MIC token to the client for the application
+ *       message that was contained in the wrap token.
+ */
+
+public class SampleClient {
+  private static final String LOGIN_CONFIG_PATH = "C:\\Users\\a" +
+      ".pashkin\\ideaProjects\\work\\security\\gss-sample\\target\\classes\\bcsLogin.conf";
+  // The name of the Kerberos principal that represents SampleServer
+  private static final String SERVICE_PRINCIPAL = "postgres/epasdatabase.hopto.org@HOPTO.ORG";
+  // The name of the host (machine) on which SampleServer is running
+  private static final String HOSTNAME = "localhost";
+  // The port number on which SampleServer listens for client connections.
+  private static final int SERVER_PORT = 4444;
+
+  public static void main(String[] args) throws IOException, GSSException
+  {
+    System.setProperty("java.security.krb5.realm", "HOPTO.ORG");
+    System.setProperty("java.security.krb5.kdc", "kerbserver.hopto.org");
+    System.setProperty("javax.security.auth.useSubjectCredsOnly", "false");
+    System.setProperty("java.security.auth.login.config",LOGIN_CONFIG_PATH );
+
+    // Attempts a socket connection with the SampleServer
+    Socket socket = new Socket(HOSTNAME, SERVER_PORT);
+    // The socket connection is accepted by SampleServer
+    // SampleClient initialize a DataInputStream and a DataOutputStream
+    // from the socket input and output streams, to be used for future data exchanges.
+    DataInputStream inStream =
+        new DataInputStream(socket.getInputStream());
+    DataOutputStream outStream =
+        new DataOutputStream(socket.getOutputStream());
+
+    System.out.println("Connected to server "
+        + socket.getInetAddress());
+
+    /*
+     * This Oid is used to represent the Kerberos version 5 GSS-API
+     * mechanism. It is defined in RFC 1964. We will use this Oid
+     * whenever we need to indicate to the GSS-API that it must
+     * use Kerberos for some purpose.
+     */
+    Oid KRB5_OID = new Oid("1.2.840.113554.1.2.2");
+
+    GSSManager manager = GSSManager.getInstance();
+
+    /*
+     * Create a GSSName out of the server's name. The null
+     * indicates that this application does not wish to make
+     * any claims about the syntax of this name and that the
+     * underlying mechanism should try to parse it as per whatever
+     * default syntax it chooses.
+     */
+    GSSName servicePrincipalName = manager.createName(SERVICE_PRINCIPAL, null);
+
+    /*
+     * Create a GSSContext for mutual authentication with the
+     * server.
+     *    - servicePrincipalName is the GSSName that represents the server.
+     *    - KRB5_OID is the Oid that represents the mechanism to
+     *      use. The client chooses the mechanism to use.
+     *    - null is passed in for client credentials
+     *    - DEFAULT_LIFETIME lets the mechanism decide how long the
+     *      gssContext can remain valid.
+     * Note: Passing in null for the credentials asks GSS-API to
+     * use the default credentials. This means that the mechanism
+     * will look among the credentials stored in the current Subject
+     * to find the right kind of credentials that it needs.
+     */
+    GSSContext gssContext = manager.createContext(servicePrincipalName,
+        KRB5_OID,
+        null,
+        GSSContext.DEFAULT_LIFETIME);
+
+    // Set the desired optional features on the gssContext. The client
+    // chooses these options.
+
+    gssContext.requestMutualAuth(true);  // Mutual authentication
+    gssContext.requestConf(true);        // Will use confidentiality later
+    gssContext.requestInteg(true);       // Will use integrity later
+
+    // Do the gssContext establishment loop
+
+    byte[] token = new byte[0];
+
+    while (!gssContext.isEstablished()) {
+
+      // token is ignored on the first call
+      token = gssContext.initSecContext(token, 0, token.length);
+
+      // Send a token to the server if one was generated by
+      // initSecContext
+      if (token != null) {
+        System.out.println("Will send token of size "
+            + token.length
+            + " from initSecContext.");
+        outStream.writeInt(token.length);
+        outStream.write(token);
+        outStream.flush();
+      }
+
+      // If the client is done with gssContext establishment
+      // then there will be no more tokens to read in this loop
+      if (!gssContext.isEstablished()) {
+        token = new byte[inStream.readInt()];
+        System.out.println("Will read input token of size "
+            + token.length
+            + " for processing by initSecContext");
+        inStream.readFully(token);
+      }
+    }
+
+    System.out.println("Context Established! ");
+    System.out.println("Client is " + gssContext.getSrcName());
+    System.out.println("Server is " + gssContext.getTargName());
+
+    /*
+     * If mutual authentication did not take place, then only the
+     * client was authenticated to the server. Otherwise, both
+     * client and server were authenticated to each other.
+     */
+    if (gssContext.getMutualAuthState())
+      System.out.println("Mutual authentication took place!");
+
+    byte[] messageBytes = "Hello There!\0".getBytes();
+
+    /*
+     * The first MessageProp argument is 0 to request
+     * the default Quality-of-Protection.
+     * The second argument is true to request
+     * privacy (encryption of the message).
+     */
+    MessageProp prop =  new MessageProp(0, true);
+
+    /*
+     * Encrypt the data and send it across. Integrity protection
+     * is always applied, irrespective of confidentiality
+     * (i.e., encryption).
+     * You can use the same token (byte array) as that used when
+     * establishing the gssContext.
+     */
+
+    token = gssContext.wrap(messageBytes, 0, messageBytes.length, prop);
+    System.out.println("Will send wrap token of size " + token.length);
+    outStream.writeInt(token.length);
+    outStream.write(token);
+    outStream.flush();
+
+    /*
+     * Now we will allow the server to decrypt the message,
+     * calculate a MIC on the decrypted message and send it back
+     * to us for verification. This is unnecessary, but done here
+     * for illustration.
+     */
+
+    token = new byte[inStream.readInt()];
+    System.out.println("Will read token of size " + token.length);
+    inStream.readFully(token);
+    gssContext.verifyMIC(token, 0, token.length,
+        messageBytes, 0, messageBytes.length,
+        prop);
+
+    System.out.println("Verified received MIC for message.");
+
+    System.out.println("Exiting...");
+    gssContext.dispose();
+    socket.close();
+  }
+}
