@@ -32,8 +32,7 @@ import java.net.Socket;
  */
 
 public class SampleServer {
-  private static final String LOGIN_CONFIG_PATH = "C:\\Users\\a" +
-      ".pashkin\\ideaProjects\\work\\security\\gss-sample\\target\\classes\\bcsLogin.conf";
+  private static final String LOGIN_CONFIG_PATH = "src/main/resources/bcsLogin.conf";
   // port number that server should listen on for client connections
   private static final int LOCAL_PORT = 4444;
 

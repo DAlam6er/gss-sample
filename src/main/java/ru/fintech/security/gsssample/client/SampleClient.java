@@ -32,8 +32,7 @@ import java.util.Set;
  * message that was contained in the wrap token.
  */
 public class SampleClient {
-  private static final String LOGIN_CONFIG_PATH = "C:\\Users\\a" +
-      ".pashkin\\ideaProjects\\work\\security\\gss-sample\\target\\classes\\bcsLogin.conf";
+  private static final String LOGIN_CONFIG_PATH = "src/main/resources/bcsLogin.conf";
   // The name of the Kerberos principal that represents SampleServer
   private static final String SERVICE_PRINCIPAL = "postgres/epasdatabase.hopto.org@HOPTO.ORG";
   // The name of the host (machine) on which SampleServer is running
