@@ -44,6 +44,7 @@ public class SampleClient {
   private static Socket socket;
   private static DataInputStream inStream;
   private static DataOutputStream outStream;
+  private static GSSContext gssContext;
 
 
   public static void main(String[] args) throws IOException, GSSException {
@@ -51,55 +52,32 @@ public class SampleClient {
 
     establishSocketConnection();
 
-    GSSContext gssContext = instantiateContext();
+    gssContext = instantiateContext();
 
-    setContextOptions(gssContext);
+    setContextOptions();
 
-    establishSecurityContext(gssContext);
+    establishSecurityContext();
 
     /*
-     * The first MessageProp argument is 0 to request
-     * the default Quality-of-Protection.
-     * The second argument is true to request
-     * privacy (encryption of the message).
+     * The first MessageProp argument is 0 to request the default Quality-of-Protection.
+     * A QOP value selects the cryptographic integrity and encryption
+     * (if requested) algorithm(s) to be used.
+     * The algorithms corresponding to various QOP values are specified by the provider
+     * of the underlying mechanism.
+     * For example, the values for Kerberos V5 are defined in RFC 1964 in section 4.2.
+     * It is common to specify 0 as the QOP value to request the default QOP.
+     *
+     * The second argument is true to request privacy (encryption of the message).
      */
     MessageProp prop = new MessageProp(0, true);
 
-    byte[] messageBytes = "Hello There!\0".getBytes();
+    String message = "Hello There!\0";
+    byte[] messageBytes = message.getBytes();
+    encryptAndSend(messageBytes, prop);
 
-    /*
-     * Encrypt the data and send it across. Integrity protection
-     * is always applied, irrespective of confidentiality
-     * (i.e., encryption).
-     * You can use the same token (byte array) as that used when
-     * establishing the gssContext.
-     */
-    // The wrap method is the primary method for message exchanges.
-    // byte[] wrap (byte[] inBuf, int offset, interface len, MessageProp msgProp)
-    byte[] token = gssContext.wrap(messageBytes, 0, messageBytes.length, prop);
-    System.out.println("Will send wrap token of size " + token.length);
-    outStream.writeInt(token.length);
-    outStream.write(token);
-    outStream.flush();
+    receiveMICAndVerify(prop, messageBytes);
 
-    /*
-     * Now we will allow the server to decrypt the message,
-     * calculate a MIC on the decrypted message and send it back
-     * to us for verification. This is unnecessary, but done here
-     * for illustration.
-     */
-    token = new byte[inStream.readInt()];
-    System.out.println("Will read token of size " + token.length);
-    inStream.readFully(token);
-    gssContext.verifyMIC(token, 0, token.length,
-        messageBytes, 0, messageBytes.length,
-        prop);
-
-    System.out.println("Verified received MIC for message.");
-
-    System.out.println("Exiting...");
-    gssContext.dispose();
-    socket.close();
+    cleanUp();
   }
 
   private static void setSystemProperties() {
@@ -189,7 +167,7 @@ public class SampleClient {
   /**
    * Set the desired optional features on the gssContext.
    */
-  private static void setContextOptions(GSSContext gssContext) throws GSSException {
+  private static void setContextOptions() throws GSSException {
     /*
      * Mutual authentication
      * The context initiator is always authenticated to the acceptor.
@@ -219,7 +197,7 @@ public class SampleClient {
     gssContext.requestInteg(true);
   }
 
-  private static void establishSecurityContext(GSSContext gssContext) throws GSSException, IOException {
+  private static void establishSecurityContext() throws GSSException, IOException {
     /*
      * The tokens returned by initSecContext are placed in a byte array.
      * Tokens should be treated by client as opaque data to be passed
@@ -278,4 +256,63 @@ public class SampleClient {
     }
   }
 
+  private static void encryptAndSend(byte[] messageBytes, MessageProp prop)
+      throws IOException, GSSException {
+
+    /*
+     * The wrap method is the primary method for message exchanges.
+     * Encrypt the data and send it across.
+     * Integrity protection is always applied, irrespective of confidentiality (i.e., encryption).
+     * You can use the same token (byte array) as that used when establishing the gssContext.
+     *
+     * The wrap method returns a token containing the message
+     * and a cryptographic Message Integrity Code (MIC) over it.
+     *
+     * The message placed in the token will be encrypted if the MessageProp indicates privacy is desired.
+     * You do not need to know the format of the returned token; it should be treated as opaque data.
+     * You send the returned token to your peer application, which calls the unwrap method
+     * to "unwrap" the token to get the original message and to verify its integrity.
+     */
+
+    // byte[] wrap (byte[] inBuf, int offset, interface len, MessageProp msgProp)
+    byte[] token = gssContext.wrap(messageBytes, 0, messageBytes.length, prop);
+    System.out.println("Will send wrap token of size " + token.length);
+    outStream.writeInt(token.length);
+    outStream.write(token);
+    outStream.flush();
+  }
+
+  private static void receiveMICAndVerify(MessageProp prop, byte[] messageBytes) throws IOException, GSSException {
+    /*
+     * Now we will allow the server to decrypt the message,
+     * calculate a MIC on the decrypted message and send it back to us for verification.
+     * This is unnecessary, but done here for illustration.
+     */
+    byte[] token = new byte[inStream.readInt()];
+    System.out.println("Will read token of size " + token.length);
+    inStream.readFully(token);
+
+    /*
+     * This verifies the MIC contained in the inToken (of length tokLen, starting at offset tokOffset)
+     * over the message contained in inMsg (of length msgLen, starting at offset msgOffset).
+     *
+     * The MessageProp is used by the underlying mechanism to return information to the caller,
+     * such as the QOP indicating the strength of protection that was applied to the message.
+     *
+     * If the verification is successful (that is, if a GSSException is not thrown),
+     * it proves that the message is exactly the same as it was when the MIC was calculated.
+     */
+    // void verifyMIC (byte[] inToken, int tokOffset, int tokLen,
+    //     byte[] inMsg, int msgOffset, int msgLen, MessageProp msgProp);
+    gssContext.verifyMIC(token, 0, token.length,
+        messageBytes, 0, messageBytes.length, prop);
+
+    System.out.println("Verified received MIC for message.");
+  }
+
+  private static void cleanUp() throws GSSException, IOException {
+    System.out.println("Exiting...");
+    gssContext.dispose();
+    socket.close();
+  }
 }
