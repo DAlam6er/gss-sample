@@ -32,7 +32,7 @@ import java.net.Socket;
  */
 
 public class SampleServer {
-  private static final String LOGIN_CONFIG_PATH = "src/main/resources/bcsLogin.conf";
+  private static final String LOGIN_CONFIG_PATH = "target/classes/bcsLogin.conf";
   // port number that server should listen on for client connections
   private static final int LOCAL_PORT = 4444;
 
